@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
 );
 
 INSERT OR REPLACE INTO system_configs (key, value, description) VALUES 
-('OPENAI_MODEL', 'gpt-4o-mini', '使用的 OpenAI 模型'),
+('OPENAI_MODEL', 'gpt-5-mini', '使用的 OpenAI 模型'),
 ('OPENAI_MAX_TOKENS', '500', '回應最大 Token 數'),
 ('HISTORY_LIMIT', '10', '保留最近幾筆對話作為上下文'),
 ('DEFAULT_GUIDELINE', '你是一個專業的翻譯小幫手，請將使用者的內容翻譯成目標語言。', '全域預設指令');
