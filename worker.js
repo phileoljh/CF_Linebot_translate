@@ -1,7 +1,11 @@
 /**
- * Cloudflare Worker for LINE Translation Bot
- * Using D1 for configuration and session persistence.
+ * 全域配置快取 (In-Memory Cache)
+ * 用於減少對 D1 資料庫的重複查詢，提升回應速度。
+ * 具備 5 分鐘自動刷新機制 (TTL)。
  */
+let CONFIG_CACHE = {};
+let LAST_FETCH_TIME = 0;
+const CACHE_TTL = 300000; // 5 分鐘 (毫秒)
 
 export default {
   async fetch(request, env, ctx) {
@@ -113,7 +117,7 @@ async function handleLineEvent(event, env) {
       // 取得歷史紀錄
       const historyLimit = await getSystemConfig("HISTORY_LIMIT", "10", env);
       const history = await getChatHistory(sessionId, parseInt(historyLimit), env);
-      
+
       // 準備 Guidelines (優先使用 Session 級別)
       const systemPrompt = session.guidelines || await getSystemConfig("DEFAULT_GUIDELINE", "你是一個翻譯助手", env);
 
@@ -128,12 +132,20 @@ async function handleLineEvent(event, env) {
       // 呼叫 OpenAI
       const aiResponse = await callOpenAI(messages, env);
 
-      // 儲存紀錄
-      const saveTasks = [saveChatHistory(sessionId, "user", userMessage, env)];
-      if (aiResponse && aiResponse.trim().length > 0) {
-        saveTasks.push(saveChatHistory(sessionId, "assistant", aiResponse, env));
+      // 執行儲存任務 (根據旗標決定是否存入 DB)
+      const saveHistoryEnabled = await getSystemConfig("SAVE_CHAT_HISTORY", "1", env) === "1";
+      const saveTasks = [];
+
+      if (saveHistoryEnabled) {
+        saveTasks.push(saveChatHistory(sessionId, "user", userMessage, env));
+        if (typeof aiResponse === "string" && aiResponse.trim().length > 0) {
+          saveTasks.push(saveChatHistory(sessionId, "assistant", aiResponse, env));
+        }
       }
-      await Promise.all(saveTasks);
+
+      if (saveTasks.length > 0) {
+        await Promise.all(saveTasks);
+      }
 
       return replyMessage(event.replyToken, aiResponse, env);
     } catch (error) {
@@ -148,8 +160,14 @@ async function handleLineEvent(event, env) {
  */
 async function replyMessage(replyToken, text, env) {
   const url = "https://api.line.me/v2/bot/message/reply";
-  
-  const safeText = (text && text.trim().length > 0) ? text : "(機器人暫時沒有回應)";
+
+  // 確保 text 是字串且不為空
+  let safeText = (typeof text === "string" && text.trim().length > 0) ? text : "(機器人暫時沒有回應)";
+
+  // 如果傳入的是物件而非字串，嘗試轉為 JSON
+  if (typeof text === "object" && text !== null) {
+    safeText = JSON.stringify(text);
+  }
   await debugLog(env, `[LINE] 準備發送回覆 - Content: ${safeText.substring(0, 50)}${safeText.length > 50 ? "..." : ""}`, 'DEBUG');
 
   const body = JSON.stringify({
@@ -182,7 +200,7 @@ async function getChatSession(sessionId, env) {
   const res = await env.DB.prepare("SELECT * FROM chat_sessions WHERE session_id = ?")
     .bind(sessionId)
     .first();
-  
+
   if (!res) {
     // 初始化 Session
     await env.DB.prepare("INSERT INTO chat_sessions (session_id, is_active) VALUES (?, 1)")
@@ -199,8 +217,22 @@ async function checkIsAdmin(userId, env) {
 }
 
 async function getSystemConfig(key, defaultValue, env) {
+  const now = Date.now();
+  // 優先檢索快取，但必須在有效期內 (TTL)
+  if (CONFIG_CACHE[key] !== undefined && (now - LAST_FETCH_TIME < CACHE_TTL)) {
+    await debugLog(env, `[Config] Cache Hit - Key: ${key}`, 'DEBUG');
+    return CONFIG_CACHE[key];
+  }
+
+  await debugLog(env, `[Config] Cache Miss/Expired - Key: ${key}, Fetching from D1...`, 'DEBUG');
   const res = await env.DB.prepare("SELECT value FROM system_configs WHERE key = ?").bind(key).first();
-  return res ? res.value : defaultValue;
+  const value = res ? res.value : defaultValue;
+
+  // 存入快取並更新最後獲取時間
+  CONFIG_CACHE[key] = value;
+  LAST_FETCH_TIME = now;
+  console.log(`[Config] Cache Updated - Key: ${key}, Value stored.`);
+  return value;
 }
 
 async function updateSessionActive(sessionId, isActive, env) {
@@ -232,19 +264,18 @@ async function saveChatHistory(sessionId, role, content, env) {
  * OpenAI API 呼叫 (已升級為 Responses API 並支援 GPT-5)
  */
 async function callOpenAI(messages, env) {
-  const model = await getSystemConfig("OPENAI_MODEL", "gpt-5-mini", env);
-  const maxTokens = await getSystemConfig("OPENAI_MAX_TOKENS", "500", env);
+  const model = await getSystemConfig("OPENAI_MODEL", "gpt-5.4-nano", env);
+  const maxTokens = await getSystemConfig("OPENAI_MAX_TOKENS", "2000", env);
+  const effort = await getSystemConfig("OPENAI_REASONING_EFFORT", "none", env);
 
   // 硬性檢查模型版本
   if (!model.toLowerCase().includes("gpt-5")) {
     const warnMsg = `[重大警告] 目前偵測到模型為 ${model}。本專案已遷移至 Responses API (/v1/responses)，此端點僅支援 GPT-5 系列。使用舊模型將導致不可預期的錯誤！`;
     await debugLog(env, warnMsg, 'CRITICAL');
-    // 雖然發出警告，但為了讓使用者明確看到錯誤，我們還是嘗試呼叫，或者可以選擇直接報錯拋出
   }
 
-  await debugLog(env, `[OpenAI] 呼叫參數 (Responses API) - Model: ${model}, Max Output Tokens: ${maxTokens}`, 'DEBUG');
+  await debugLog(env, `[OpenAI] 呼叫參數 (Responses API) - Model: ${model}, Effort: ${effort}, Max Output Tokens: ${maxTokens}`, 'DEBUG');
 
-  // 注意：GPT-5 Responses API 建議移除 temperature 以使用預設推論邏輯
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -253,8 +284,11 @@ async function callOpenAI(messages, env) {
     },
     body: JSON.stringify({
       model: model,
-      input: messages, // Responses API 使用 input 接收對話紀錄
-      max_output_tokens: parseInt(maxTokens), // 使用新的參數名稱
+      input: messages,
+      max_output_tokens: parseInt(maxTokens),
+      reasoning: {
+        effort: effort
+      }
     }),
   });
 
@@ -265,21 +299,52 @@ async function callOpenAI(messages, env) {
     throw new Error(data.error?.message || "OpenAI API Error");
   }
 
-  // 解析 Responses API 回傳結構 (優先尋找 output_text)
-  const result = data.output_text || data.output?.[0]?.text || data.output?.[0]?.message?.content || "";
-  
-  if (!result && !data.refusal) {
-    // 當解析不到內容且不是拒絕回答時，印出完整結構以便除錯
-    await debugLog(env, `[OpenAI] 解析失敗 - 完整回傳結構: ${JSON.stringify(data)}`, 'CRITICAL');
+  // 深度解析核心：遞迴尋找任何可能潛藏在陣列或物件中的文字內容
+  const extractText = (val) => {
+    if (typeof val === "string") return val;
+    if (Array.isArray(val)) {
+      // 處理陣列，過濾掉推理區塊並串接文本
+      return val
+        .filter(item => item && item.type !== "reasoning")
+        .map(extractText)
+        .join(""); // .trim() 移至外層，避免遞迴中過度修剪
+    }
+    if (typeof val === "object" && val !== null) {
+      // 核心修正：GPT-5 的 text 欄位可能是物件也可能是字串
+      // 我們按優先序檢索，且只有在確定是字串時才直接回傳
+      if (typeof val.text === "string") return val.text;
+      if (typeof val.content === "string") return val.content;
+
+      // 若欄位依然是物件，則繼續遞迴
+      return extractText(val.text) || extractText(val.content) || extractText(val.message) || "";
+    }
+    return "";
+  };
+
+  let result = extractText(data.output_text) || extractText(data.output) || "";
+  if (typeof result === "string") result = result.trim();
+
+  if (!result) {
+    if (data.status === "incomplete") {
+      const reason = data.incomplete_details?.reason || "未知原因";
+      await debugLog(env, `[OpenAI] 回應不完整 - 原因: ${reason}`, 'CRITICAL');
+      return `(模型回應不完整，原因: ${reason}。這通常是因為 Token 上限不足或推論過長。)`;
+    }
+
+    if (!data.refusal) {
+      await debugLog(env, `[OpenAI] 解析失敗 - 完整回傳結構: ${JSON.stringify(data)}`, 'CRITICAL');
+    }
   }
-  
+
   if (!result && data.refusal) {
     await debugLog(env, `[OpenAI] 模型拒絕回答 - 原因: ${data.refusal}`, 'CRITICAL');
     return `(模型拒絕回答: ${data.refusal})`;
   }
 
-  await debugLog(env, `[OpenAI] 成功取得回應 - 長度: ${result ? result.length : 0}`, 'DEBUG');
-  return result || "";
+  const finalResult = (typeof result === "string") ? result : (result ? JSON.stringify(result) : "");
+
+  await debugLog(env, `[OpenAI] 成功取得回應 - 類型: ${typeof result}, 長度: ${finalResult.length}`, 'DEBUG');
+  return finalResult;
 }
 
 /**
@@ -291,8 +356,22 @@ async function debugLog(env, message, level = 'DEBUG') {
     console.error(message);
     return;
   }
-  
-  const debugEnabled = await getSystemConfig("ENABLE_DEBUGGING", "1", env);
+
+  // 直接讀取全域快取開關，避免遞迴呼叫 getSystemConfig
+  let debugEnabled = CONFIG_CACHE["ENABLE_DEBUGGING"];
+
+  // 如果快取中還沒有開關值，則直接向 DB 查詢並補回快取
+  if (debugEnabled === undefined) {
+    try {
+      const res = await env.DB.prepare("SELECT value FROM system_configs WHERE key = 'ENABLE_DEBUGGING'").first();
+      debugEnabled = res ? res.value : "1";
+      CONFIG_CACHE["ENABLE_DEBUGGING"] = debugEnabled;
+    } catch (e) {
+      console.error("[Fatal] 無法讀取偵錯開關", e);
+      debugEnabled = "1";
+    }
+  }
+
   if (debugEnabled === "1") {
     console.log(message);
   }

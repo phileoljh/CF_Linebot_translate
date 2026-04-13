@@ -29,11 +29,13 @@ CREATE TABLE IF NOT EXISTS chat_history (
 );
 
 INSERT OR REPLACE INTO system_configs (key, value, description) VALUES 
-('OPENAI_MODEL', 'gpt-5-mini', '使用的 OpenAI 模型'),
-('OPENAI_TEMPERATURE', '0.0', 'OpenAI 採樣溫度 (0.0-2.0)'),
-('OPENAI_MAX_TOKENS', '500', '回應最大 Token 數'),
+('OPENAI_MODEL', 'gpt-5.4-nano', '使用的 OpenAI 模型'),
+('OPENAI_TEMPERATURE', '1.0', 'OpenAI 採樣溫度 (0.0-2.0)'),
+('OPENAI_MAX_TOKENS', '2000', '回應最大 Token 數 (GPT-5 包含推理量)'),
+('OPENAI_REASONING_EFFORT', 'none', '推理強度 (none, low, medium, high, xhigh)'),
 ('HISTORY_LIMIT', '10', '保留最近幾筆對話作為上下文'),
-('DEFAULT_GUIDELINE', '將所有輸入的訊息翻譯成中文(zh-TW)，日文(ja)，法文(fr)，英文(en)等語言，先列出語言如【en】【zh-TW】，後附上此語言翻譯結果，照順序一種語言一行，僅執行翻譯，不進行其他互動或回答問題', '全域預設指令'),
+('DEFAULT_GUIDELINE', '將輸入訊息翻譯為以下語言，每一種語言換一行：\n【zh-TW】翻譯內容\n【ja】翻譯內容\n【fr】翻譯內容\n【en】翻譯內容\n僅執行翻譯，直接輸出結果，不准進行深度思考。', '全域預設指令'),
+('SAVE_CHAT_HISTORY', '1', '是否將對話紀錄存入 D1 資料庫 (1: 是, 0: 否)'),
 ('ENABLE_DEBUGGING', '1', '是否開啟詳細偵錯日誌 (1: 是, 0: 否)');
 
 -- ==========================================
