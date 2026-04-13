@@ -9,6 +9,15 @@ const CACHE_TTL = 300000; // 5 分鐘 (毫秒)
 // Bulk Sync 去重鎖：防止快取到期時多個並行呼叫同時觸發重複的 D1 查詢 (Cache Stampede)
 let activeConfigSync = null;
 
+/**
+ * 管理者清單快取 (In-Memory Cache)
+ * 避免每次訊息都向 D1 查詢 admins 資料表。
+ * TTL 設為 10 分鐘，可接受短暫延遲更新（新增/刪除管理者最多 10 分鐘生效）。
+ */
+let ADMIN_CACHE = null;       // null 表示尚未初始化；Set 表示已載入
+let ADMIN_CACHE_TIME = 0;
+const ADMIN_CACHE_TTL = 600000; // 10 分鐘 (毫秒)
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method !== "POST") {
@@ -150,8 +159,11 @@ async function handleLineEvent(event, env) {
         getSystemConfig("DEFAULT_GUIDELINE", "你是一個翻譯助手", env),
       ]);
 
-      // 取得歷史紀錄（依賴 historyLimit，於上方 Promise.all 完成後執行）
-      const history = await getChatHistory(sessionId, parseInt(historyLimit), env);
+      // 取得歷史紀錄：僅在 SAVE_CHAT_HISTORY=1 時才查詢 D1
+      // 若功能停用，直接回傳空陣列，避免每次請求白白消耗一次 D1 Rows Read
+      const history = saveHistoryEnabled === "1"
+        ? await getChatHistory(sessionId, parseInt(historyLimit), env)
+        : [];
 
       // 準備 Guidelines (優先使用 Session 級別，其次為全域預設)
       const systemPrompt = session.guidelines || defaultGuideline;
@@ -231,7 +243,8 @@ async function replyMessage(replyToken, text, env) {
  */
 
 async function getChatSession(sessionId, env) {
-  const res = await env.DB.prepare("SELECT * FROM chat_sessions WHERE session_id = ?")
+  // 僅讀取必要欄位，減少 D1 資料傳輸量
+  const res = await env.DB.prepare("SELECT is_active, guidelines FROM chat_sessions WHERE session_id = ?")
     .bind(sessionId)
     .first();
 
@@ -246,8 +259,26 @@ async function getChatSession(sessionId, env) {
 }
 
 async function checkIsAdmin(userId, env) {
-  const res = await env.DB.prepare("SELECT 1 FROM admins WHERE user_id = ?").bind(userId).first();
-  return !!res;
+  const now = Date.now();
+
+  // 判定管理者快取是否需要更新（首次載入或 TTL 到期）
+  if (ADMIN_CACHE === null || (now - ADMIN_CACHE_TIME) >= ADMIN_CACHE_TTL) {
+    try {
+      // 一次性載入全部管理者清單，儲存為 Set 以支援 O(1) 查詢
+      const { results } = await env.DB.prepare("SELECT user_id FROM admins").all();
+      ADMIN_CACHE = new Set(results.map(r => r.user_id));
+      ADMIN_CACHE_TIME = now;
+      console.log(`[Admin] 快取更新完成。管理者數量: ${ADMIN_CACHE.size}`);
+    } catch (e) {
+      console.error("[Admin] 快取更新失敗，降級為直接查詢 DB", e);
+      // 快取更新失敗時，降級為直接查詢確保功能正確
+      const res = await env.DB.prepare("SELECT 1 FROM admins WHERE user_id = ?").bind(userId).first();
+      return !!res;
+    }
+  }
+
+  // Set.has() 為 O(1) 純記憶體操作，不觸發 D1 查詢
+  return ADMIN_CACHE.has(userId);
 }
 
 async function getSystemConfig(key, defaultValue, env) {
