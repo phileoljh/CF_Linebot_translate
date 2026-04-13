@@ -222,7 +222,7 @@ async function callOpenAI(messages, env) {
     body: JSON.stringify({
       model,
       messages,
-      max_tokens: parseInt(maxTokens),
+      max_completion_tokens: parseInt(maxTokens),
     }),
   });
 
