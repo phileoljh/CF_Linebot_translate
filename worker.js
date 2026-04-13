@@ -16,11 +16,16 @@ export default {
       const body = await request.text();
       const signature = request.headers.get("x-line-signature");
 
+      console.log(`[Webhook] 入口請求 - Path: ${pathname}, Signature: ${signature ? "已提供" : "缺失"}`);
+
       if (!signature || !(await verifySignature(body, signature, env.LINE_CHANNEL_SECRET))) {
+        console.error("[Webhook] 簽章驗證失敗");
         return new Response("Unauthorized", { status: 401 });
       }
 
       const events = JSON.parse(body).events;
+      console.log(`[Webhook] 接收到 ${events.length} 個事件`);
+
       for (const event of events) {
         ctx.waitUntil(handleLineEvent(event, env));
       }
@@ -60,10 +65,14 @@ async function handleLineEvent(event, env) {
   const userMessage = event.message.text.trim();
 
   // 1. 取得 Session 狀態與管理者資訊
+  console.log(`[Event] 收到處理請求 - Session: ${sessionId}, User: ${userId}, Message: ${userMessage}`);
+
   const [session, isAdmin] = await Promise.all([
     getChatSession(sessionId, env),
     checkIsAdmin(userId, env),
   ]);
+
+  console.log(`[Session] 狀態 - Active: ${session.is_active}, IsAdmin: ${isAdmin}`);
 
   // 2. 指令解析 (Admin Only)
   if (isAdmin) {
@@ -133,9 +142,13 @@ async function handleLineEvent(event, env) {
  */
 async function replyMessage(replyToken, text, env) {
   const url = "https://api.line.me/v2/bot/message/reply";
+  
+  const safeText = (text && text.trim().length > 0) ? text : "(機器人暫時沒有回應)";
+  console.log(`[LINE] 準備發送回覆 - Content: ${safeText.substring(0, 50)}${safeText.length > 50 ? "..." : ""}`);
+
   const body = JSON.stringify({
     replyToken,
-    messages: [{ type: "text", text }],
+    messages: [{ type: "text", text: safeText }],
   });
 
   const response = await fetch(url, {
@@ -147,8 +160,11 @@ async function replyMessage(replyToken, text, env) {
     body,
   });
 
+  const resText = await response.text();
   if (!response.ok) {
-    console.error("LINE Reply Error:", await response.text());
+    console.error(`[LINE] 回傳錯誤 - Status: ${response.status}, Body: ${resText}`);
+  } else {
+    console.log("[LINE] 回覆發送成功");
   }
 }
 
@@ -214,6 +230,8 @@ async function callOpenAI(messages, env) {
   const maxTokens = await getSystemConfig("OPENAI_MAX_TOKENS", "500", env);
   const temperature = await getSystemConfig("OPENAI_TEMPERATURE", "0.0", env);
 
+  console.log(`[OpenAI] 呼叫參數 - Model: ${model}, Temp: ${temperature}, Tokens: ${maxTokens}`);
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -230,7 +248,12 @@ async function callOpenAI(messages, env) {
 
   const data = await response.json();
   if (!response.ok) {
+    const errDetail = JSON.stringify(data);
+    console.error(`[OpenAI] API 報錯 - Status: ${response.status}, Detail: ${errDetail}`);
     throw new Error(data.error?.message || "OpenAI API Error");
   }
-  return data.choices[0].message.content;
+
+  const result = data.choices[0].message.content;
+  console.log(`[OpenAI] 成功取得回應 - 長度: ${result ? result.length : 0}`);
+  return result;
 }
