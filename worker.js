@@ -115,7 +115,7 @@ async function handleLineEvent(event, env) {
   if (session.is_active === 1) {
     try {
       // 取得歷史紀錄
-      const historyLimit = await getSystemConfig("HISTORY_LIMIT", "10", env);
+      const historyLimit = await getSystemConfig("HISTORY_LIMIT", "0", env);
       const history = await getChatHistory(sessionId, parseInt(historyLimit), env);
 
       // 準備 Guidelines (優先使用 Session 級別)
@@ -218,21 +218,35 @@ async function checkIsAdmin(userId, env) {
 
 async function getSystemConfig(key, defaultValue, env) {
   const now = Date.now();
-  // 優先檢索快取，但必須在有效期內 (TTL)
-  if (CONFIG_CACHE[key] !== undefined && (now - LAST_FETCH_TIME < CACHE_TTL)) {
-    await debugLog(env, `[Config] Cache Hit - Key: ${key}`, 'DEBUG');
-    return CONFIG_CACHE[key];
+  
+  // 判定是否需要執行全量同步 (快取為空或已過期)
+  const isExpired = (now - LAST_FETCH_TIME) >= CACHE_TTL;
+  const isEmpty = Object.keys(CONFIG_CACHE).length === 0;
+
+  if (isExpired || isEmpty) {
+    await debugLog(env, `[Config] Bulk Syncing (Reason: ${isEmpty ? 'Initial' : 'Expired'})`, 'DEBUG');
+    
+    try {
+      // 一次性抓取整張配置表
+      const { results } = await env.DB.prepare("SELECT key, value FROM system_configs").all();
+      
+      // 抹除舊快取並重新填充，確保與 DB 狀態完全同步
+      const newCache = {};
+      results.forEach(row => {
+        newCache[row.key] = row.value;
+      });
+      
+      CONFIG_CACHE = newCache;
+      LAST_FETCH_TIME = now;
+      console.log(`[Config] Bulk Sync Successful. Total items: ${results.length}`);
+    } catch (e) {
+      console.error("[Config] Bulk Sync Failed", e);
+      // 失敗時不更新時間，下次呼叫會再次嘗試刷新
+    }
   }
 
-  await debugLog(env, `[Config] Cache Miss/Expired - Key: ${key}, Fetching from D1...`, 'DEBUG');
-  const res = await env.DB.prepare("SELECT value FROM system_configs WHERE key = ?").bind(key).first();
-  const value = res ? res.value : defaultValue;
-
-  // 存入快取並更新最後獲取時間
-  CONFIG_CACHE[key] = value;
-  LAST_FETCH_TIME = now;
-  console.log(`[Config] Cache Updated - Key: ${key}, Value stored.`);
-  return value;
+  const value = CONFIG_CACHE[key];
+  return (value !== undefined) ? value : defaultValue;
 }
 
 async function updateSessionActive(sessionId, isActive, env) {
