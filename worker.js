@@ -15,8 +15,9 @@ export default {
     if (pathname === "/webhook") {
       const body = await request.text();
       const signature = request.headers.get("x-line-signature");
+      const debugEnabled = await getSystemConfig("ENABLE_DEBUGGING", "1", env) === "1";
 
-      console.log(`[Webhook] 入口請求 - Path: ${pathname}, Signature: ${signature ? "已提供" : "缺失"}`);
+      await debugLog(env, `[Webhook] 入口請求 - Path: ${pathname}, Signature: ${signature ? "已提供" : "缺失"}`, 'DEBUG');
 
       if (!signature || !(await verifySignature(body, signature, env.LINE_CHANNEL_SECRET))) {
         console.error("[Webhook] 簽章驗證失敗");
@@ -24,7 +25,9 @@ export default {
       }
 
       const events = JSON.parse(body).events;
-      console.log(`[Webhook] 接收到 ${events.length} 個事件`);
+      if (debugEnabled) {
+        console.log(`[Webhook] 接收到 ${events.length} 個事件`);
+      }
 
       for (const event of events) {
         ctx.waitUntil(handleLineEvent(event, env));
@@ -72,7 +75,7 @@ async function handleLineEvent(event, env) {
     checkIsAdmin(userId, env),
   ]);
 
-  console.log(`[Session] 狀態 - Active: ${session.is_active}, IsAdmin: ${isAdmin}`);
+  await debugLog(env, `[Session] 狀態 - Active: ${session.is_active}, IsAdmin: ${isAdmin}`, 'DEBUG');
 
   // 2. 指令解析 (Admin Only)
   if (isAdmin) {
@@ -131,7 +134,7 @@ async function handleLineEvent(event, env) {
 
       return replyMessage(event.replyToken, aiResponse, env);
     } catch (error) {
-      console.error("OpenAI Error:", error);
+      await debugLog(env, `處理訊息時發生錯誤: ${error.message}`, 'CRITICAL');
       return replyMessage(event.replyToken, `處理訊息時發生錯誤: ${error.message}`, env);
     }
   }
@@ -144,7 +147,7 @@ async function replyMessage(replyToken, text, env) {
   const url = "https://api.line.me/v2/bot/message/reply";
   
   const safeText = (text && text.trim().length > 0) ? text : "(機器人暫時沒有回應)";
-  console.log(`[LINE] 準備發送回覆 - Content: ${safeText.substring(0, 50)}${safeText.length > 50 ? "..." : ""}`);
+  await debugLog(env, `[LINE] 準備發送回覆 - Content: ${safeText.substring(0, 50)}${safeText.length > 50 ? "..." : ""}`, 'DEBUG');
 
   const body = JSON.stringify({
     replyToken,
@@ -162,9 +165,9 @@ async function replyMessage(replyToken, text, env) {
 
   const resText = await response.text();
   if (!response.ok) {
-    console.error(`[LINE] 回傳錯誤 - Status: ${response.status}, Body: ${resText}`);
+    await debugLog(env, `[LINE] 回傳錯誤 - Status: ${response.status}, Body: ${resText}`, 'CRITICAL');
   } else {
-    console.log("[LINE] 回覆發送成功");
+    await debugLog(env, "[LINE] 回覆發送成功", 'DEBUG');
   }
 }
 
@@ -223,44 +226,66 @@ async function saveChatHistory(sessionId, role, content, env) {
 }
 
 /**
- * OpenAI API 呼叫
+ * OpenAI API 呼叫 (已升級為 Responses API 並支援 GPT-5)
  */
 async function callOpenAI(messages, env) {
-  const model = await getSystemConfig("OPENAI_MODEL", "gpt-4o-mini", env);
+  const model = await getSystemConfig("OPENAI_MODEL", "gpt-5-mini", env);
   const maxTokens = await getSystemConfig("OPENAI_MAX_TOKENS", "500", env);
-  const temperature = await getSystemConfig("OPENAI_TEMPERATURE", "0.0", env);
 
-  console.log(`[OpenAI] 呼叫參數 - Model: ${model}, Temp: ${temperature}, Tokens: ${maxTokens}`);
+  // 硬性檢查模型版本
+  if (!model.toLowerCase().includes("gpt-5")) {
+    const warnMsg = `[重大警告] 目前偵測到模型為 ${model}。本專案已遷移至 Responses API (/v1/responses)，此端點僅支援 GPT-5 系列。使用舊模型將導致不可預期的錯誤！`;
+    await debugLog(env, warnMsg, 'CRITICAL');
+    // 雖然發出警告，但為了讓使用者明確看到錯誤，我們還是嘗試呼叫，或者可以選擇直接報錯拋出
+  }
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  await debugLog(env, `[OpenAI] 呼叫參數 (Responses API) - Model: ${model}, Max Output Tokens: ${maxTokens}`, 'DEBUG');
+
+  // 注意：GPT-5 Responses API 建議移除 temperature 以使用預設推論邏輯
+  const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: parseInt(maxTokens),
-      temperature: parseFloat(temperature),
+      model: model,
+      input: messages, // Responses API 使用 input 接收對話紀錄
+      max_output_tokens: parseInt(maxTokens), // 使用新的參數名稱
     }),
   });
 
   const data = await response.json();
   if (!response.ok) {
     const errDetail = JSON.stringify(data);
-    console.error(`[OpenAI] API 報錯 - Status: ${response.status}, Detail: ${errDetail}`);
+    await debugLog(env, `[OpenAI] API 報錯 - Status: ${response.status}, Detail: ${errDetail}`, 'CRITICAL');
     throw new Error(data.error?.message || "OpenAI API Error");
   }
 
-  const message = data.choices[0].message;
-  const result = message.content;
+  // 解析 Responses API 回傳結構 (優先尋找 output_text)
+  const result = data.output_text || data.output?.[0]?.text || "";
   
-  if (!result && message.refusal) {
-    console.warn(`[OpenAI] 模型拒絕回答 - 原因: ${message.refusal}`);
-    return `(模型拒絕回答: ${message.refusal})`;
+  if (!result && data.refusal) {
+    await debugLog(env, `[OpenAI] 模型拒絕回答 - 原因: ${data.refusal}`, 'CRITICAL');
+    return `(模型拒絕回答: ${data.refusal})`;
   }
 
-  console.log(`[OpenAI] 成功取得回應 - 長度: ${result ? result.length : 0}`);
+  await debugLog(env, `[OpenAI] 成功取得回應 - 長度: ${result ? result.length : 0}`, 'DEBUG');
   return result || "";
+}
+
+/**
+ * 集中管理日誌輸出
+ * @param {string} level 'DEBUG' | 'CRITICAL'
+ */
+async function debugLog(env, message, level = 'DEBUG') {
+  if (level === 'CRITICAL') {
+    console.error(message);
+    return;
+  }
+  
+  const debugEnabled = await getSystemConfig("ENABLE_DEBUGGING", "1", env);
+  if (debugEnabled === "1") {
+    console.log(message);
+  }
 }

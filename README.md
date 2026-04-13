@@ -10,6 +10,15 @@
 - **持久化**: 使用 D1 存儲對話歷史與系統設定，即使重新部署也不會遺失狀態。
 - **靈活性**: 支援單一對話群組的獨立翻譯設定（例如：群組 A 翻日文，群組 B 翻英文）。
 - **免費額度**: Cloudflare Workers 與 D1 的免費方案足以應付一般個人與小群組使用。
+- **GPT-5 支援**: 已升級至 OpenAI 最新的 **Responses API**，支援具備推論能力的 `gpt-5-mini` 模型。
+
+---
+
+> [!CAUTION]
+> **重大更新與不相容說明 (2026-04-13)**  
+> 此專案已將 OpenAI 的整合模式從 Chat Completions 遷移至 **Responses API (/v1/responses)**。
+> - **僅支援 GPT-5 系列模型**：由於 API 結構（Payload 與 Endpoint）大幅變動，舊款模型（如 GPT-4, GPT-3.5）已不再相容。
+> - **參數異動**：移除了 `temperature` 參數（由 GPT-5 推論引擎自動接管），並使用 `max_output_tokens` 控制長度。
 
 ---
 
@@ -51,6 +60,13 @@
 
 ### 通用指令
 - `show id`: 查詢目前的 User ID 與 Group/Session ID (用於設定管理者)。
+
+### 系統配置 (system_configs)
+- `OPENAI_MODEL`: 預設為 `gpt-5-mini`。**請勿改回舊模型**，否則會發生 API 錯誤。
+- `ENABLE_DEBUGGING`: 
+    - `1`: 開啟詳細偵錯日誌。
+    - `0`: 僅記錄重大錯誤指標。
+    - 建議平時設為 `0` 以節省 Console 日誌空間。
 
 ---
 
