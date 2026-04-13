@@ -119,7 +119,9 @@ async function handleLineEvent(event, env) {
 
       const messages = [
         { role: "system", content: systemPrompt },
-        ...history.map(h => ({ role: h.role, content: h.content })),
+        ...history
+          .filter(h => h.content && h.content.trim().length > 0) // 過濾空內容訊息
+          .map(h => ({ role: h.role, content: h.content })),
         { role: "user", content: userMessage }
       ];
 
@@ -127,10 +129,11 @@ async function handleLineEvent(event, env) {
       const aiResponse = await callOpenAI(messages, env);
 
       // 儲存紀錄
-      await Promise.all([
-        saveChatHistory(sessionId, "user", userMessage, env),
-        saveChatHistory(sessionId, "assistant", aiResponse, env),
-      ]);
+      const saveTasks = [saveChatHistory(sessionId, "user", userMessage, env)];
+      if (aiResponse && aiResponse.trim().length > 0) {
+        saveTasks.push(saveChatHistory(sessionId, "assistant", aiResponse, env));
+      }
+      await Promise.all(saveTasks);
 
       return replyMessage(event.replyToken, aiResponse, env);
     } catch (error) {
@@ -263,7 +266,12 @@ async function callOpenAI(messages, env) {
   }
 
   // 解析 Responses API 回傳結構 (優先尋找 output_text)
-  const result = data.output_text || data.output?.[0]?.text || "";
+  const result = data.output_text || data.output?.[0]?.text || data.output?.[0]?.message?.content || "";
+  
+  if (!result && !data.refusal) {
+    // 當解析不到內容且不是拒絕回答時，印出完整結構以便除錯
+    await debugLog(env, `[OpenAI] 解析失敗 - 完整回傳結構: ${JSON.stringify(data)}`, 'CRITICAL');
+  }
   
   if (!result && data.refusal) {
     await debugLog(env, `[OpenAI] 模型拒絕回答 - 原因: ${data.refusal}`, 'CRITICAL');
