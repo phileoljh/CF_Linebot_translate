@@ -241,7 +241,7 @@ async function callOpenAI(messages, env) {
     body: JSON.stringify({
       model,
       messages,
-      max_completion_tokens: parseInt(maxTokens),
+      max_tokens: parseInt(maxTokens),
       temperature: parseFloat(temperature),
     }),
   });
@@ -253,7 +253,14 @@ async function callOpenAI(messages, env) {
     throw new Error(data.error?.message || "OpenAI API Error");
   }
 
-  const result = data.choices[0].message.content;
+  const message = data.choices[0].message;
+  const result = message.content;
+  
+  if (!result && message.refusal) {
+    console.warn(`[OpenAI] 模型拒絕回答 - 原因: ${message.refusal}`);
+    return `(模型拒絕回答: ${message.refusal})`;
+  }
+
   console.log(`[OpenAI] 成功取得回應 - 長度: ${result ? result.length : 0}`);
-  return result;
+  return result || "";
 }
