@@ -63,10 +63,31 @@
 
 ### 系統配置 (system_configs)
 - `OPENAI_MODEL`: 預設為 `gpt-5-mini`。**請勿改回舊模型**，否則會發生 API 錯誤。
-- `ENABLE_DEBUGGING`: 
+- `ENABLE_DEBUGGING`:
     - `1`: 開啟詳細偵錯日誌。
     - `0`: 僅記錄重大錯誤指標。
-    - 建議平時設為 `0` 以節省 Console 日誌空間。
+- `CHAT_RETENTION_DAYS`:
+    - 預設 `30`: 自動清理 30 天前的歷史對話紀錄。
+
+---
+
+## 🕒 定期維護 (Scheduled Tasks)
+
+本專案利用 Cloudflare Workers 的 **Cron Triggers** 來保持資料庫的精簡。
+
+### 設定步驟：
+1. **使用命令列 (CLI)**:
+   在 `wrangler.toml` 中加入以下設定並重新部署：
+   ```toml
+   [triggers]
+   crons = ["0 0 * * *"] # 每天凌晨執行一次
+   ```
+2. **使用 Web 介面**:
+   - 進入 **Workers & Pages** -> 你的 Worker。
+   - 前往 **Settings** -> **Triggers** -> **Cron Triggers**。
+   - 點擊 **Add Cron Trigger**，設定為 `0 0 * * *` (每天午夜)。
+
+系統執行時會讀取 `CHAT_RETENTION_DAYS` 的值，自動刪除過期資料。
 
 ---
 
@@ -75,6 +96,7 @@
 - [x] 使用 D1 實現對話歷史記憶
 - [x] 支援管理者權限控制
 - [x] 更新 README 說明文件
+- [x] 實作 Cron Trigger 自動清理 (30天)
 - [ ] 支援更多 AI 模型切換介面
 
 ---

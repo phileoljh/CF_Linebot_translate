@@ -28,14 +28,17 @@ CREATE TABLE IF NOT EXISTS chat_history (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_chat_history_session_id ON chat_history (session_id, id DESC);
+
 INSERT OR REPLACE INTO system_configs (key, value, description) VALUES 
 ('OPENAI_MODEL', 'gpt-5.4-nano', '使用的 OpenAI 模型'),
 ('OPENAI_TEMPERATURE', '1.0', 'OpenAI 採樣溫度 (0.0-2.0)'),
 ('OPENAI_MAX_TOKENS', '2000', '回應最大 Token 數 (GPT-5 包含推理量)'),
 ('OPENAI_REASONING_EFFORT', 'none', '推理強度 (none, low, medium, high, xhigh)'),
-('HISTORY_LIMIT', '0', '保留最近幾筆對話作為上下文'),
+('HISTORY_LIMIT', '2', '保留最近幾筆對話作為上下文'),
 ('DEFAULT_GUIDELINE', '將輸入訊息翻譯為以下語言，每一種語言換一行：\n【zh-TW】翻譯內容\n【ja】翻譯內容\n【fr】翻譯內容\n【en】翻譯內容\n僅執行翻譯，直接輸出結果，不准進行深度思考。', '全域預設指令'),
-('SAVE_CHAT_HISTORY', '1', '是否將對話紀錄存入 D1 資料庫 (1: 是, 0: 否)'),
+('SAVE_CHAT_HISTORY', '0', '是否將對話紀錄存入 D1 資料庫 (1: 是, 0: 否)'),
+('CHAT_RETENTION_DAYS', '30', '對話紀錄保留天數'),
 ('ENABLE_DEBUGGING', '1', '是否開啟詳細偵錯日誌 (1: 是, 0: 否)');
 
 -- ==========================================
@@ -49,3 +52,4 @@ INSERT OR REPLACE INTO system_configs (key, value, description) VALUES
 --    - guidelines: 此群組專屬的翻譯/行為指令
 -- 4. chat_history: 對話歷史紀錄表
 --    - role: 'system', 'user', 'assistant'
+-- 5. idx_chat_history_session_id: 加速歷史紀錄查詢與排序

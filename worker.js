@@ -42,6 +42,25 @@ export default {
 
     return new Response("Not Found", { status: 404 });
   },
+
+  /**
+   * 2. 定期維護任務 (Cron Trigger)
+   * 根據 CHAT_RETENTION_DAYS 自動清理過期對話紀錄
+   */
+  async scheduled(event, env, ctx) {
+    const retentionDays = await getSystemConfig("CHAT_RETENTION_DAYS", "30", env);
+    console.log(`[Scheduled] 啟動自動清理 - 保留天數: ${retentionDays} 天`);
+
+    try {
+      const result = await env.DB.prepare(
+        "DELETE FROM chat_history WHERE created_at < datetime('now', '-' || ? || ' days')"
+      ).bind(retentionDays).run();
+
+      console.log(`[Scheduled] 清理完成。共移除 ${result.meta.changes} 筆過期紀錄。`);
+    } catch (error) {
+      console.error("[Scheduled] 清理任務失敗:", error);
+    }
+  }
 };
 
 /**
@@ -133,10 +152,10 @@ async function handleLineEvent(event, env) {
       const aiResponse = await callOpenAI(messages, env);
 
       // 執行儲存任務 (根據旗標決定是否存入 DB)
-      const saveHistoryEnabled = await getSystemConfig("SAVE_CHAT_HISTORY", "1", env) === "1";
+      const saveHistoryEnabled = await getSystemConfig("SAVE_CHAT_HISTORY", "0", env);
       const saveTasks = [];
 
-      if (saveHistoryEnabled) {
+      if (saveHistoryEnabled === "1") {
         saveTasks.push(saveChatHistory(sessionId, "user", userMessage, env));
         if (typeof aiResponse === "string" && aiResponse.trim().length > 0) {
           saveTasks.push(saveChatHistory(sessionId, "assistant", aiResponse, env));
