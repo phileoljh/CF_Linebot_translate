@@ -32,7 +32,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_history_session_id ON chat_history (session_
 
 INSERT OR REPLACE INTO system_configs (key, value, description) VALUES 
 ('OPENAI_MODEL', 'gpt-5.4-nano', '使用的 OpenAI 模型'),
-('OPENAI_TEMPERATURE', '1.0', 'OpenAI 採樣溫度 (0.0-2.0)'),
 ('OPENAI_MAX_TOKENS', '2000', '回應最大 Token 數 (GPT-5 包含推理量)'),
 ('OPENAI_REASONING_EFFORT', 'none', '推理強度 (none, low, medium, high, xhigh)'),
 ('HISTORY_LIMIT', '2', '保留最近幾筆對話作為上下文'),
@@ -40,6 +39,10 @@ INSERT OR REPLACE INTO system_configs (key, value, description) VALUES
 ('SAVE_CHAT_HISTORY', '0', '是否將對話紀錄存入 D1 資料庫 (1: 是, 0: 否)'),
 ('CHAT_RETENTION_DAYS', '30', '對話紀錄保留天數'),
 ('ENABLE_DEBUGGING', '1', '是否開啟詳細偵錯日誌 (1: 是, 0: 否)');
+
+-- 清理已廢棄的設定：Responses API (GPT-5) 不支援 temperature 參數
+-- 若資料庫已存在此欄位（由舊版 schema 建立），此指令將其移除
+DELETE FROM system_configs WHERE key = 'OPENAI_TEMPERATURE';
 
 -- ==========================================
 -- 欄位說明與註解 (放在下方，不影響上方拷貝)

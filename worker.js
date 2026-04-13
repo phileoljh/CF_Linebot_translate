@@ -30,16 +30,17 @@ export default {
     if (pathname === "/webhook") {
       const body = await request.text();
       const signature = request.headers.get("x-line-signature");
-      const debugEnabled = await getSystemConfig("ENABLE_DEBUGGING", "1", env) === "1";
 
-      await debugLog(env, `[Webhook] 入口請求 - Path: ${pathname}, Signature: ${signature ? "已提供" : "缺失"}`, 'DEBUG');
-
+      // 先驗證簽章，非法請求直接拒絕，不觸發任何日誌 I/O 或設定讀取
       if (!signature || !(await verifySignature(body, signature, env.LINE_CHANNEL_SECRET))) {
         console.error("[Webhook] 簽章驗證失敗");
         return new Response("Unauthorized", { status: 401 });
       }
 
+      // 驗證通過後才記錄日誌與讀取設定
+      await debugLog(env, `[Webhook] 入口請求驗證通過 - Path: ${pathname}`, 'DEBUG');
       const events = JSON.parse(body).events;
+      const debugEnabled = await getSystemConfig("ENABLE_DEBUGGING", "1", env) === "1";
       if (debugEnabled) {
         console.log(`[Webhook] 接收到 ${events.length} 個事件`);
       }
@@ -230,8 +231,9 @@ async function replyMessage(replyToken, text, env) {
     body,
   });
 
-  const resText = await response.text();
+  // 成功時無需讀取回應 body，避免不必要的 I/O；失敗時才讀取以獲取錯誤詳情
   if (!response.ok) {
+    const resText = await response.text();
     await debugLog(env, `[LINE] 回傳錯誤 - Status: ${response.status}, Body: ${resText}`, 'CRITICAL');
   } else {
     await debugLog(env, "[LINE] 回覆發送成功", 'DEBUG');
