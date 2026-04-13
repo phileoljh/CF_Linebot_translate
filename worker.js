@@ -6,6 +6,8 @@
 let CONFIG_CACHE = {};
 let LAST_FETCH_TIME = 0;
 const CACHE_TTL = 300000; // 5 分鐘 (毫秒)
+// Bulk Sync 去重鎖：防止快取到期時多個並行呼叫同時觸發重複的 D1 查詢 (Cache Stampede)
+let activeConfigSync = null;
 
 export default {
   async fetch(request, env, ctx) {
@@ -93,9 +95,15 @@ async function handleLineEvent(event, env) {
   // 1. 取得 Session 狀態與管理者資訊
   console.log(`[Event] 收到處理請求 - Session: ${sessionId}, User: ${userId}, Message: ${userMessage}`);
 
+  // 三個任務同步並行發起，消除串行等待：
+  // 1. getChatSession：讀取或初始化此 session 的狀態
+  // 2. checkIsAdmin：驗證此用戶是否為管理者
+  // 3. getSystemConfig 預熱：觸發 Bulk Sync，一次將全部 system_configs 載入記憶體
+  //    確保後續所有 debugLog 與 config 讀取均命中快取，不再觸發額外 D1 查詢
   const [session, isAdmin] = await Promise.all([
     getChatSession(sessionId, env),
     checkIsAdmin(userId, env),
+    getSystemConfig("ENABLE_DEBUGGING", "1", env), // 副作用：預熱 CONFIG_CACHE
   ]);
 
   await debugLog(env, `[Session] 狀態 - Active: ${session.is_active}, IsAdmin: ${isAdmin}`, 'DEBUG');
@@ -133,12 +141,20 @@ async function handleLineEvent(event, env) {
   // 4. ChatGPT 對話邏輯
   if (session.is_active === 1) {
     try {
-      // 取得歷史紀錄
-      const historyLimit = await getSystemConfig("HISTORY_LIMIT", "0", env);
+      // 並行讀取所有需要的設定值
+      // 快取已在函數入口的預熱步驟填充完畢，此步為純記憶體操作，無 D1 I/O
+      // saveHistoryEnabled 提前至此讀取，消除原本在 aiResponse 之後才讀取所造成的串行等待
+      const [historyLimit, saveHistoryEnabled, defaultGuideline] = await Promise.all([
+        getSystemConfig("HISTORY_LIMIT", "0", env),
+        getSystemConfig("SAVE_CHAT_HISTORY", "0", env),
+        getSystemConfig("DEFAULT_GUIDELINE", "你是一個翻譯助手", env),
+      ]);
+
+      // 取得歷史紀錄（依賴 historyLimit，於上方 Promise.all 完成後執行）
       const history = await getChatHistory(sessionId, parseInt(historyLimit), env);
 
-      // 準備 Guidelines (優先使用 Session 級別)
-      const systemPrompt = session.guidelines || await getSystemConfig("DEFAULT_GUIDELINE", "你是一個翻譯助手", env);
+      // 準備 Guidelines (優先使用 Session 級別，其次為全域預設)
+      const systemPrompt = session.guidelines || defaultGuideline;
 
       const messages = [
         { role: "system", content: systemPrompt },
@@ -152,7 +168,6 @@ async function handleLineEvent(event, env) {
       const aiResponse = await callOpenAI(messages, env);
 
       // 執行儲存任務 (根據旗標決定是否存入 DB)
-      const saveHistoryEnabled = await getSystemConfig("SAVE_CHAT_HISTORY", "0", env);
       const saveTasks = [];
 
       if (saveHistoryEnabled === "1") {
@@ -243,25 +258,33 @@ async function getSystemConfig(key, defaultValue, env) {
   const isEmpty = Object.keys(CONFIG_CACHE).length === 0;
 
   if (isExpired || isEmpty) {
-    await debugLog(env, `[Config] Bulk Syncing (Reason: ${isEmpty ? 'Initial' : 'Expired'})`, 'DEBUG');
-    
-    try {
-      // 一次性抓取整張配置表
-      const { results } = await env.DB.prepare("SELECT key, value FROM system_configs").all();
-      
-      // 抹除舊快取並重新填充，確保與 DB 狀態完全同步
-      const newCache = {};
-      results.forEach(row => {
-        newCache[row.key] = row.value;
-      });
-      
-      CONFIG_CACHE = newCache;
-      LAST_FETCH_TIME = now;
-      console.log(`[Config] Bulk Sync Successful. Total items: ${results.length}`);
-    } catch (e) {
-      console.error("[Config] Bulk Sync Failed", e);
-      // 失敗時不更新時間，下次呼叫會再次嘗試刷新
+    // 去重保護：若已有 Bulk Sync 任務在飛行中（由其他並行呼叫觸發），
+    // 直接等待同一個 Promise，不重複發起 D1 查詢（Cache Stampede 防護）
+    if (!activeConfigSync) {
+      activeConfigSync = (async () => {
+        await debugLog(env, `[Config] Bulk Syncing (Reason: ${isEmpty ? 'Initial' : 'Expired'})`, 'DEBUG');
+        try {
+          // 一次性抓取整張配置表
+          const { results } = await env.DB.prepare("SELECT key, value FROM system_configs").all();
+
+          // 抹除舊快取並重新填充，確保與 DB 狀態完全同步
+          const newCache = {};
+          results.forEach(row => {
+            newCache[row.key] = row.value;
+          });
+
+          CONFIG_CACHE = newCache;
+          LAST_FETCH_TIME = Date.now();
+          console.log(`[Config] Bulk Sync Successful. Total items: ${results.length}`);
+        } catch (e) {
+          console.error("[Config] Bulk Sync Failed", e);
+          // 失敗時不更新時間，下次呼叫會再次嘗試刷新
+        } finally {
+          activeConfigSync = null; // 無論成功或失敗，釋放鎖，允許下次重試
+        }
+      })();
     }
+    await activeConfigSync; // 所有並行呼叫等待同一個 Promise 完成
   }
 
   const value = CONFIG_CACHE[key];
@@ -297,9 +320,13 @@ async function saveChatHistory(sessionId, role, content, env) {
  * OpenAI API 呼叫 (已升級為 Responses API 並支援 GPT-5)
  */
 async function callOpenAI(messages, env) {
-  const model = await getSystemConfig("OPENAI_MODEL", "gpt-5.4-nano", env);
-  const maxTokens = await getSystemConfig("OPENAI_MAX_TOKENS", "2000", env);
-  const effort = await getSystemConfig("OPENAI_REASONING_EFFORT", "none", env);
+  // 並行讀取三個 OpenAI 設定值
+  // 正常情況下快取已由 handleLineEvent 入口的預熱步驟填充，此步為純記憶體操作，無 D1 I/O
+  const [model, maxTokens, effort] = await Promise.all([
+    getSystemConfig("OPENAI_MODEL", "gpt-5.4-nano", env),
+    getSystemConfig("OPENAI_MAX_TOKENS", "2000", env),
+    getSystemConfig("OPENAI_REASONING_EFFORT", "none", env),
+  ]);
 
   // 硬性檢查模型版本
   if (!model.toLowerCase().includes("gpt-5")) {
