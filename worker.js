@@ -212,6 +212,7 @@ async function saveChatHistory(sessionId, role, content, env) {
 async function callOpenAI(messages, env) {
   const model = await getSystemConfig("OPENAI_MODEL", "gpt-4o-mini", env);
   const maxTokens = await getSystemConfig("OPENAI_MAX_TOKENS", "500", env);
+  const temperature = await getSystemConfig("OPENAI_TEMPERATURE", "0.0", env);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -223,6 +224,7 @@ async function callOpenAI(messages, env) {
       model,
       messages,
       max_completion_tokens: parseInt(maxTokens),
+      temperature: parseFloat(temperature),
     }),
   });
 

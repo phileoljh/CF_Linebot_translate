@@ -30,9 +30,10 @@ CREATE TABLE IF NOT EXISTS chat_history (
 
 INSERT OR REPLACE INTO system_configs (key, value, description) VALUES 
 ('OPENAI_MODEL', 'gpt-5-mini', '使用的 OpenAI 模型'),
+('OPENAI_TEMPERATURE', '0.0', 'OpenAI 採樣溫度 (0.0-2.0)'),
 ('OPENAI_MAX_TOKENS', '500', '回應最大 Token 數'),
 ('HISTORY_LIMIT', '10', '保留最近幾筆對話作為上下文'),
-('DEFAULT_GUIDELINE', '你是一個專業的翻譯小幫手，請將使用者的內容翻譯成目標語言。', '全域預設指令');
+('DEFAULT_GUIDELINE', '將所有輸入的訊息翻譯成中文(zh-TW)，日文(ja)，法文(fr)，英文(en)等語言，先列出語言如【en】【zh-TW】，後附上此語言翻譯結果，照順序一種語言一行，僅執行翻譯，不進行其他互動或回答問題', '全域預設指令');
 
 -- ==========================================
 -- 欄位說明與註解 (放在下方，不影響上方拷貝)
