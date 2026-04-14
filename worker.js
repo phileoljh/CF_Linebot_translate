@@ -128,62 +128,78 @@ async function handleLineEvent(event, env, ctx) {
   await debugLog(env, `[Session] 狀態 - Active: ${session.is_active}, IsAdmin: ${isAdmin}`, 'DEBUG');
 
   // 2. 指令解析系統
-  if (userMessage.startsWith("/")) {
+  if (userMessage.startsWith("/") || userMessage.startsWith("／")) {
     const fullCommand = userMessage.slice(1).trim();
-    const [command, ...args] = fullCommand.split(/\s+/);
-    const argString = args.join(" ").trim();
+    const [mainCommand, ...args] = fullCommand.split(/\s+/);
+    const subCommand = args[0] ? args[0].toLowerCase() : null;
+    const argString = args.slice(1).join(" ").trim();
+    const command = mainCommand.toLowerCase();
 
-    // -- 一般指令 (任何人可用) --
-    if (command === "查ID") {
-      const info = `User ID: ${userId}\nSession ID: ${sessionId}\nIs Admin: ${isAdmin ? '是' : '否'}`;
+    // -- 一般指令 (任何使用者可用) --
+    if (command === "id") {
+      const info = `User ID: ${userId}\nSession ID: ${sessionId}\nIs Admin: ${isAdmin ? 'Yes' : 'No'}`;
       return replyMessage(event.replyToken, info, env);
     }
 
-    if (command === "查語種") {
-      const supportedLangs = await getSystemConfig("SUPPORTED_LANGUAGES", "繁體中文, 英文, 日文", env);
-      return replyMessage(event.replyToken, `目前的支援語種列表：\n${supportedLangs}`, env);
-    }
-
-    if (command === "幫助" || command.toLowerCase() === "help") {
-      let helpMsg = "🤖 翻譯機器人指令說明\n\n【一般指令】\n";
-      helpMsg += "🔹 /查ID - 查詢您的個人與會話 ID\n";
-      helpMsg += "🔹 /查語種 - 查詢目前支援翻譯的語系\n";
-      helpMsg += "🔹 /幫助 - 顯示此說明選單\n";
+    if (command === "help") {
+      let helpMsg = "🤖 Translation Bot Commands\n\n【General】\n";
+      helpMsg += "🔹 /id - 查詢 ID 資訊\n";
+      helpMsg += "🔹 /lang show - 查詢支援語種\n";
+      helpMsg += "🔹 /help - 顯示此說明選單\n";
 
       if (isAdmin) {
-        helpMsg += "\n⚙️ 【管理員指令】\n";
-        helpMsg += "🔸 /說話 - 開啟翻譯回應功能\n";
-        helpMsg += "🔸 /閉嘴 - 關閉翻譯回應功能\n";
-        helpMsg += "🔸 /設定語系 [列表] - 指定翻譯目標，例如: /設定語系 泰文, 越文\n";
-        helpMsg += "🔸 /狀態 - 查詢系統詳細配置與狀態";
+        helpMsg += "\n⚙️ 【Admin】\n";
+        helpMsg += "🔸 /on - 開啟翻譯回應\n";
+        helpMsg += "🔸 /off - 關閉翻譯回應\n";
+        helpMsg += "🔸 /lang set [codes] - 設定語系 (範例: /lang set zh-TW, ja)\n";
+        helpMsg += "🔸 /lang reset - 重置為系統預設語系\n";
+        helpMsg += "🔸 /status - 查詢系統詳細配置與狀態";
       }
       return replyMessage(event.replyToken, helpMsg, env);
     }
 
-    // -- 管理員專屬指令 --
+    // -- Lang 子指令系統 --
+    if (command === "lang") {
+      if (subCommand === "show") {
+        const supportedLangs = await getSystemConfig("SUPPORTED_LANGUAGES", "zh-TW, en, ja", env);
+        return replyMessage(event.replyToken, `目前的支援語種列表：\n${supportedLangs}`, env);
+      }
+
+      // Admin Only sub-commands
+      if (isAdmin) {
+        if (subCommand === "set") {
+          if (!argString) return replyMessage(event.replyToken, "❌ Usage: /lang set zh-TW, en, ja", env);
+          
+          const langLines = argString.split(/[，,]/).map(l => {
+            const normalized = normalizeLangCode(l.trim());
+            return `【${normalized}】翻譯內容`;
+          }).join("\n");
+          const newGuidelines = `將輸入訊息翻譯為以下語言，每一種語言換一行：\n${langLines}\n僅執行翻譯，直接輸出結果，不准進行深度思考。`;
+          
+          ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
+          return replyMessage(event.replyToken, `✅ Updated settings:\n\n${newGuidelines}`, env);
+        }
+        if (subCommand === "reset") {
+          ctx.waitUntil(updateSessionGuidelines(sessionId, null, env));
+          return replyMessage(event.replyToken, "✅ Reset to system default guidelines.", env);
+        }
+      }
+    }
+
+    // -- 其他 Admin 指令 --
     if (isAdmin) {
-      if (command === "說話") {
+      if (command === "on") {
         ctx.waitUntil(updateSessionActive(sessionId, 1, env));
-        return replyMessage(event.replyToken, "我可以說話囉，歡迎來跟我互動 ^_^", env);
+        return replyMessage(event.replyToken, "Responses ENABLED. I'm ready to translate! ^_^", env);
       }
-      if (command === "閉嘴") {
+      if (command === "off") {
         ctx.waitUntil(updateSessionActive(sessionId, 0, env));
-        return replyMessage(event.replyToken, "好的，我乖乖閉嘴 > <，如需我繼續說話，請輸入 `/說話`", env);
+        return replyMessage(event.replyToken, "Responses DISABLED. Entering quiet mode. > <", env);
       }
-      if (command === "設定語系") {
-        if (!argString) return replyMessage(event.replyToken, "❌ 請輸入語言列表。範例：`/設定語系 泰文, 英文`", env);
-        
-        // 依照 DEFAULT_GUIDELINE 格式生成，並保持與目前 Prompt 邏輯一致
-        const langLines = argString.split(/[，,]/).map(l => `【${l.trim()}】翻譯內容`).join("\n");
-        const newGuidelines = `將輸入訊息翻譯為以下語言，每一種語言換一行：\n${langLines}\n僅執行翻譯，直接輸出結果，不准進行深度思考。`;
-        
-        ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
-        return replyMessage(event.replyToken, `✅ 已成功更新翻譯設定：\n\n${newGuidelines}`, env);
-      }
-      if (command === "狀態") {
+      if (command === "status") {
         const configs = await env.DB.prepare("SELECT * FROM system_configs").all();
         const configStr = configs.results.map(c => `${c.key}: ${c.value}`).join("\n");
-        const status = `Session ID: ${sessionId}\nAnswer mode Is Active: ${session.is_active}\n\nSystem Configs:\n${configStr}`;
+        const status = `Session ID: ${sessionId}\nActive: ${session.is_active}\n\nSystem Configs:\n${configStr}`;
         return replyMessage(event.replyToken, status, env);
       }
     }
@@ -501,4 +517,31 @@ async function debugLog(env, message, level = 'DEBUG') {
   if (debugEnabled === "1") {
     console.log(message);
   }
+}
+
+/**
+ * 語系代碼標準化 (大小寫與格式防呆)
+ * @param {string} code 
+ * @returns {string} 
+ */
+function normalizeLangCode(code) {
+  const mapping = {
+    'zh-tw': 'zh-TW',
+    'zh-cn': 'zh-CN',
+    'en-us': 'en-US',
+    'en-gb': 'en-GB'
+  };
+  const lower = code.toLowerCase();
+  
+  // 處理帶連字號的格式 (xx-yy -> xx-YY)
+  if (lower.includes('-')) {
+    const parts = lower.split('-');
+    if (parts.length === 2) {
+      // 排除像是 'zh-tw' 這種已經在 mapping 裡的
+      if (mapping[lower]) return mapping[lower];
+      return `${parts[0].toLowerCase()}-${parts[1].toUpperCase()}`;
+    }
+  }
+  
+  return mapping[lower] || lower;
 }
