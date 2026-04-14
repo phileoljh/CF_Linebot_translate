@@ -46,7 +46,7 @@ export default {
       }
 
       for (const event of events) {
-        ctx.waitUntil(handleLineEvent(event, env));
+        ctx.waitUntil(handleLineEvent(event, env, ctx));
       }
 
       return new Response("OK", { status: 200 });
@@ -95,7 +95,10 @@ async function verifySignature(body, signature, secret) {
 /**
  * 處理 LINE 事件
  */
-async function handleLineEvent(event, env) {
+/**
+ * 處理 LINE 事件
+ */
+async function handleLineEvent(event, env, ctx) {
   if (event.type !== "message" || event.message.type !== "text") return;
 
   const sessionId = event.source.groupId || event.source.roomId || event.source.userId;
@@ -121,17 +124,17 @@ async function handleLineEvent(event, env) {
   // 2. 指令解析 (Admin Only)
   if (isAdmin) {
     if (userMessage === "說話") {
-      await updateSessionActive(sessionId, 1, env);
+      ctx.waitUntil(updateSessionActive(sessionId, 1, env));
       return replyMessage(event.replyToken, "我可以說話囉，歡迎來跟我互動 ^_^", env);
     }
     if (userMessage === "閉嘴") {
-      await updateSessionActive(sessionId, 0, env);
+      ctx.waitUntil(updateSessionActive(sessionId, 0, env));
       return replyMessage(event.replyToken, "好的，我乖乖閉嘴 > <，如果想要我繼續說話，請跟我說 「說話」", env);
     }
     if (userMessage.toLowerCase().startsWith("lang set ")) {
       const langs = userMessage.slice(9).trim();
       const newGuidelines = `將所有輸入的訊息翻譯成 ${langs} 等幾種語言，每種語言一行，僅執行翻譯，不進行其他互動。`;
-      await updateSessionGuidelines(sessionId, newGuidelines, env);
+      ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
       return replyMessage(event.replyToken, `已更新翻譯設定：\n${newGuidelines}`, env);
     }
     if (userMessage.toLowerCase() === "查目前的變數值") {
@@ -180,18 +183,13 @@ async function handleLineEvent(event, env) {
       // 呼叫 OpenAI
       const aiResponse = await callOpenAI(messages, env);
 
-      // 執行儲存任務 (根據旗標決定是否存入 DB)
-      const saveTasks = [];
-
+      // 將儲存任務移至背景執行 (ctx.waitUntil)，立即回覆使用者
       if (saveHistoryEnabled === "1") {
-        saveTasks.push(saveChatHistory(sessionId, "user", userMessage, env));
+        const saveTasks = [saveChatHistory(sessionId, "user", userMessage, env)];
         if (typeof aiResponse === "string" && aiResponse.trim().length > 0) {
           saveTasks.push(saveChatHistory(sessionId, "assistant", aiResponse, env));
         }
-      }
-
-      if (saveTasks.length > 0) {
-        await Promise.all(saveTasks);
+        ctx.waitUntil(Promise.all(saveTasks));
       }
 
       return replyMessage(event.replyToken, aiResponse, env);
