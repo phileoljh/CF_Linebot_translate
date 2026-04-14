@@ -38,7 +38,8 @@ INSERT OR REPLACE INTO system_configs (key, value, description) VALUES
 ('DEFAULT_GUIDELINE', '將輸入訊息翻譯為以下語言，每一種語言換一行：\n【zh-TW】翻譯內容\n【ja】翻譯內容\n【fr】翻譯內容\n【en】翻譯內容\n僅執行翻譯，直接輸出結果，不准進行深度思考。', '全域預設指令'),
 ('SAVE_CHAT_HISTORY', '0', '是否將對話紀錄存入 D1 資料庫 (1: 是, 0: 否)'),
 ('CHAT_RETENTION_DAYS', '30', '對話紀錄保留天數'),
-('ENABLE_DEBUGGING', '1', '是否開啟詳細偵錯日誌 (1: 是, 0: 否)');
+('ENABLE_DEBUGGING', '1', '是否開啟詳細偵錯日誌 (1: 是, 0: 否)'),
+('SUPPORTED_LANGUAGES', '繁體中文 (zh-TW), 日文 (ja), 英文 (en), 法文 (fr), 泰文 (th), 印尼文 (id), 越南文 (vi), 印度文 (hi), 菲律賓文 (tl), 柬埔寨文 (km)', '支援的語種列表');
 
 -- 清理已廢棄的設定：Responses API (GPT-5) 不支援 temperature 參數
 -- 若資料庫已存在此欄位（由舊版 schema 建立），此指令將其移除

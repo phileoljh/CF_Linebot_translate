@@ -127,34 +127,66 @@ async function handleLineEvent(event, env, ctx) {
 
   await debugLog(env, `[Session] 狀態 - Active: ${session.is_active}, IsAdmin: ${isAdmin}`, 'DEBUG');
 
-  // 2. 指令解析 (Admin Only)
-  if (isAdmin) {
-    if (userMessage === "說話") {
-      ctx.waitUntil(updateSessionActive(sessionId, 1, env));
-      return replyMessage(event.replyToken, "我可以說話囉，歡迎來跟我互動 ^_^", env);
-    }
-    if (userMessage === "閉嘴") {
-      ctx.waitUntil(updateSessionActive(sessionId, 0, env));
-      return replyMessage(event.replyToken, "好的，我乖乖閉嘴 > <，如果想要我繼續說話，請跟我說 「說話」", env);
-    }
-    if (userMessage.toLowerCase().startsWith("lang set ")) {
-      const langs = userMessage.slice(9).trim();
-      const newGuidelines = `將所有輸入的訊息翻譯成 ${langs} 等幾種語言，每種語言一行，僅執行翻譯，不進行其他互動。`;
-      ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
-      return replyMessage(event.replyToken, `已更新翻譯設定：\n${newGuidelines}`, env);
-    }
-    if (userMessage.toLowerCase() === "查目前的變數值") {
-      const configs = await env.DB.prepare("SELECT * FROM system_configs").all();
-      const configStr = configs.results.map(c => `${c.key}: ${c.value}`).join("\n");
-      const status = `Session ID: ${sessionId}\nIs Active: ${session.is_active}\n\nSystem Configs:\n${configStr}`;
-      return replyMessage(event.replyToken, status, env);
-    }
-  }
+  // 2. 指令解析系統
+  if (userMessage.startsWith("/")) {
+    const fullCommand = userMessage.slice(1).trim();
+    const [command, ...args] = fullCommand.split(/\s+/);
+    const argString = args.join(" ").trim();
 
-  // 3. 通用指令
-  if (userMessage.toLowerCase() === "show id") {
-    const info = `User ID: ${userId}\nSession ID: ${sessionId}\nIs Admin: ${isAdmin}`;
-    return replyMessage(event.replyToken, info, env);
+    // -- 一般指令 (任何人可用) --
+    if (command === "查ID") {
+      const info = `User ID: ${userId}\nSession ID: ${sessionId}\nIs Admin: ${isAdmin ? '是' : '否'}`;
+      return replyMessage(event.replyToken, info, env);
+    }
+
+    if (command === "查語種") {
+      const supportedLangs = await getSystemConfig("SUPPORTED_LANGUAGES", "繁體中文, 英文, 日文", env);
+      return replyMessage(event.replyToken, `目前的支援語種列表：\n${supportedLangs}`, env);
+    }
+
+    if (command === "幫助" || command.toLowerCase() === "help") {
+      let helpMsg = "🤖 翻譯機器人指令說明\n\n【一般指令】\n";
+      helpMsg += "🔹 /查ID - 查詢您的個人與會話 ID\n";
+      helpMsg += "🔹 /查語種 - 查詢目前支援翻譯的語系\n";
+      helpMsg += "🔹 /幫助 - 顯示此說明選單\n";
+
+      if (isAdmin) {
+        helpMsg += "\n⚙️ 【管理員指令】\n";
+        helpMsg += "🔸 /說話 - 開啟翻譯回應功能\n";
+        helpMsg += "🔸 /閉嘴 - 關閉翻譯回應功能\n";
+        helpMsg += "🔸 /設定語系 [列表] - 指定翻譯目標，例如: /設定語系 泰文, 越文\n";
+        helpMsg += "🔸 /狀態 - 查詢系統詳細配置與狀態";
+      }
+      return replyMessage(event.replyToken, helpMsg, env);
+    }
+
+    // -- 管理員專屬指令 --
+    if (isAdmin) {
+      if (command === "說話") {
+        ctx.waitUntil(updateSessionActive(sessionId, 1, env));
+        return replyMessage(event.replyToken, "我可以說話囉，歡迎來跟我互動 ^_^", env);
+      }
+      if (command === "閉嘴") {
+        ctx.waitUntil(updateSessionActive(sessionId, 0, env));
+        return replyMessage(event.replyToken, "好的，我乖乖閉嘴 > <，如需我繼續說話，請輸入 `/說話`", env);
+      }
+      if (command === "設定語系") {
+        if (!argString) return replyMessage(event.replyToken, "❌ 請輸入語言列表。範例：`/設定語系 泰文, 英文`", env);
+        
+        // 依照 DEFAULT_GUIDELINE 格式生成，並保持與目前 Prompt 邏輯一致
+        const langLines = argString.split(/[，,]/).map(l => `【${l.trim()}】翻譯內容`).join("\n");
+        const newGuidelines = `將輸入訊息翻譯為以下語言，每一種語言換一行：\n${langLines}\n僅執行翻譯，直接輸出結果，不准進行深度思考。`;
+        
+        ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
+        return replyMessage(event.replyToken, `✅ 已成功更新翻譯設定：\n\n${newGuidelines}`, env);
+      }
+      if (command === "狀態") {
+        const configs = await env.DB.prepare("SELECT * FROM system_configs").all();
+        const configStr = configs.results.map(c => `${c.key}: ${c.value}`).join("\n");
+        const status = `Session ID: ${sessionId}\nAnswer mode Is Active: ${session.is_active}\n\nSystem Configs:\n${configStr}`;
+        return replyMessage(event.replyToken, status, env);
+      }
+    }
   }
 
   // 4. ChatGPT 對話邏輯
@@ -287,7 +319,7 @@ async function checkIsAdmin(userId, env) {
 
 async function getSystemConfig(key, defaultValue, env) {
   const now = Date.now();
-  
+
   // 判定是否需要執行全量同步 (快取為空或已過期)
   const isExpired = (now - LAST_FETCH_TIME) >= CACHE_TTL;
   const isEmpty = Object.keys(CONFIG_CACHE).length === 0;
