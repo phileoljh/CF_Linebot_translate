@@ -15,3 +15,7 @@ crons = ["5 22 * * *"] # 每天 06:05 (UTC+8) 執行一次
 
 # [env.production]
 # 這裡可以放置環境特定變數 (非敏感資訊)
+
+# ── 觀測系統 (Logs) ──
+[observability]
+enabled = true
