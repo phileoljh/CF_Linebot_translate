@@ -108,15 +108,21 @@ async function handleLineEvent(event, env, ctx) {
   // 1. 取得 Session 狀態與管理者資訊
   console.log(`[Event] 收到處理請求 - Session: ${sessionId}, User: ${userId}, Message: ${userMessage}`);
 
-  // 三個任務同步並行發起，消除串行等待：
-  // 1. getChatSession：讀取或初始化此 session 的狀態
-  // 2. checkIsAdmin：驗證此用戶是否為管理者
-  // 3. getSystemConfig 預熱：觸發 Bulk Sync，一次將全部 system_configs 載入記憶體
-  //    確保後續所有 debugLog 與 config 讀取均命中快取，不再觸發額外 D1 查詢
+  // 一次性發起所有必要的並行任務，消除所有後續的階梯式等待
   const [session, isAdmin] = await Promise.all([
     getChatSession(sessionId, env),
     checkIsAdmin(userId, env),
-    getSystemConfig("ENABLE_DEBUGGING", "1", env), // 副作用：預熱 CONFIG_CACHE
+    // 預熱所有系統設定 (以 ENABLE_DEBUGGING 為引導觸發 Bulk Sync)
+    // 雖然 getSystemConfig 本身有平行防護，但在入口處明確並行能確保後續邏輯 100% 命中快取
+    Promise.all([
+      getSystemConfig("ENABLE_DEBUGGING", "1", env),
+      getSystemConfig("HISTORY_LIMIT", "0", env),
+      getSystemConfig("SAVE_CHAT_HISTORY", "0", env),
+      getSystemConfig("DEFAULT_GUIDELINE", "你是一個翻譯助手", env),
+      getSystemConfig("OPENAI_MODEL", "gpt-5.4-nano", env),
+      getSystemConfig("OPENAI_MAX_TOKENS", "2000", env),
+      getSystemConfig("OPENAI_REASONING_EFFORT", "none", env),
+    ])
   ]);
 
   await debugLog(env, `[Session] 狀態 - Active: ${session.is_active}, IsAdmin: ${isAdmin}`, 'DEBUG');
@@ -154,9 +160,7 @@ async function handleLineEvent(event, env, ctx) {
   // 4. ChatGPT 對話邏輯
   if (session.is_active === 1) {
     try {
-      // 並行讀取所有需要的設定值
-      // 快取已在函數入口的預熱步驟填充完畢，此步為純記憶體操作，無 D1 I/O
-      // saveHistoryEnabled 提前至此讀取，消除原本在 aiResponse 之後才讀取所造成的串行等待
+      // 並行讀取所有需要的設定值 (此時應已 100% 命中記憶體快取)
       const [historyLimit, saveHistoryEnabled, defaultGuideline] = await Promise.all([
         getSystemConfig("HISTORY_LIMIT", "0", env),
         getSystemConfig("SAVE_CHAT_HISTORY", "0", env),
@@ -351,8 +355,7 @@ async function saveChatHistory(sessionId, role, content, env) {
  * OpenAI API 呼叫 (已升級為 Responses API 並支援 GPT-5)
  */
 async function callOpenAI(messages, env) {
-  // 並行讀取三個 OpenAI 設定值
-  // 正常情況下快取已由 handleLineEvent 入口的預熱步驟填充，此步為純記憶體操作，無 D1 I/O
+  // 讀取設定值 (此時應已 100% 命中記憶體快取)
   const [model, maxTokens, effort] = await Promise.all([
     getSystemConfig("OPENAI_MODEL", "gpt-5.4-nano", env),
     getSystemConfig("OPENAI_MAX_TOKENS", "2000", env),
