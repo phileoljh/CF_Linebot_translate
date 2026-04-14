@@ -170,10 +170,10 @@ async function handleLineEvent(event, env, ctx) {
         if (subCommand === "set") {
           if (!argString) return replyMessage(event.replyToken, "❌ Usage: /lang set zh-TW, en, ja", env);
           
-          const langLines = argString.split(/[，,]/).map(l => {
+          const langLines = argString.split(/[，,\s]+/).map(l => {
             const normalized = normalizeLangCode(l.trim());
             return `【${normalized}】翻譯內容`;
-          }).join("\n");
+          }).filter(l => l.length > 0).join("\n");
           const newGuidelines = `將輸入訊息翻譯為以下語言，每一種語言換一行：\n${langLines}\n僅執行翻譯，直接輸出結果，不准進行深度思考。`;
           
           ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
