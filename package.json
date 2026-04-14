@@ -1,0 +1,13 @@
+{
+  "name": "cf-linebot-translate",
+  "version": "1.0.0",
+  "description": "LINE Translation Bot using Cloudflare Workers and D1",
+  "main": "worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

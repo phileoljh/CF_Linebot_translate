@@ -1,0 +1,17 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "cf-linebot-translate"
+main = "worker.js"
+compatibility_date = "2024-04-03"
+
+# D1 資料庫綁定
+[[d1_databases]]
+binding = "DB" # 對應程式碼中的 env.DB
+database_name = "line-bot-db" # 這是您的資料庫顯示名稱
+database_id = "c631b7e0-72ba-466d-8652-36d75c14346a"
+
+# 定期維護任務 (自動清理過期日誌)
+[triggers]
+crons = ["5 22 * * *"] # 每天 06:05 (UTC+8) 執行一次
+
+# [env.production]
+# 這裡可以放置環境特定變數 (非敏感資訊)

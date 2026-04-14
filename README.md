@@ -29,23 +29,34 @@
 2. 點擊 **Create database**，名稱自訂（例如 `line-bot-db`）。
 3. 進入該資料庫的 **Console**，複製並執行 [`schema.sql`](./schema.sql) 中的所有 SQL 指令。
 
-### 2. 建立 Cloudflare Worker
-1. 進入 **Workers & Pages** -> **Create application** -> **Create Worker**。
-2. 命名後點擊 **Deploy**，接著點擊 **Edit code**。
-3. 將 [`worker.js`](./worker.js) 的內容完整複製並貼入編輯器中。
-4. **重要設定 (Settings)**:
-   - **Bindings**: 前往 **Settings** -> **Variables** -> **D1 database bindings**，將變數名稱設為 `DB`，並選擇你剛才建立的資料庫。
-   - **Secrets**: 前往 **Settings** -> **Variables** -> **Environment Variables**，新增以下加密變數：
-     - `LINE_CHANNEL_SECRET`: LINE Developer Console 取得。
-     - `LINE_CHANNEL_ACCESS_TOKEN`: LINE Developer Console 取得。
-     - `OPENAI_API_KEY`: OpenAI API 取得。
+### 2. 部署至 Cloudflare Workers
+本專案支援 **GitHub 自動部署**，只需完成以下設定：
+
+1. **上傳至 GitHub**: 將此專案推送到您的 GitHub 儲存庫。
+2. **連接 Cloudflare**:
+   - 進入 **Workers & Pages** -> **Create application** -> **Connect to Git**。
+   - 選擇您的儲存庫並連動。
+   - Cloudflare 會自動讀取 `wrangler.toml` 完成所有配置（入口、D1 綁定、Cron Trigger）。
+3. **設定 Secrets**:
+   前往 Worker 的 **Settings** -> **Variables**，新增以下加密變數：
+   - `LINE_CHANNEL_SECRET`
+   - `LINE_CHANNEL_ACCESS_TOKEN`
+   - `OPENAI_API_KEY`
+
+---
+
+## 💻 本地模式 (選用)
+如果您想在本地測試或使用命令列：
+1. **安裝環境**: 確保已安裝 Node.js。
+2. **執行開發伺服器**: `npm install && npm run dev`。
+3. **部署**: `npx wrangler deploy`。
+
+---
 
 ### 3. 設定 LINE Webhook
 1. 在 [LINE Developers Console](https://developers.line.biz/) 中找到你的 Messaging API Channel。
-2. 進入 **Messaging API** 分頁。
-3. 在 **Webhook URL** 填入你的 Worker 網址，並加上 `/webhook` (例如：`https://your-worker.your-subdomain.workers.dev/webhook`)。
-4. 點擊 **Verify** 檢查連線是否成功。
-5. **務必開啟** `Use webhook` 選項。
+2. 在 **Webhook URL** 填入你的 Worker 網址，加上 `/webhook`。
+3. 點擊 **Verify** 並開啟 `Use webhook` 選項。
 
 ---
 
@@ -71,21 +82,12 @@
 
 ---
 
-## 🕒 定期維護 (Scheduled Tasks)
-
-本專案利用 Cloudflare Workers 的 **Cron Triggers** 來保持資料庫的精簡。
-
-### 設定步驟：
-1. **使用命令列 (CLI)**:
-   在 `wrangler.toml` 中加入以下設定並重新部署：
-   ```toml
-   [triggers]
-   crons = ["0 0 * * *"] # 每天凌晨執行一次
-   ```
-2. **使用 Web 介面**:
-   - 進入 **Workers & Pages** -> 你的 Worker。
-   - 前往 **Settings** -> **Triggers** -> **Cron Triggers**。
-   - 點擊 **Add Cron Trigger**，設定為 `0 0 * * *` (每天午夜)。
+本專案利用 `wrangler.toml` 中的 `[triggers]` 自動設定 Cron Triggers：
+```toml
+[triggers]
+crons = ["0 0 * * *"] # 每天凌晨執行一次
+```
+當您透過 GitHub 或 `wrangler deploy` 部署時，此設定會自動同步至 Cloudflare。
 
 系統執行時會讀取 `CHAT_RETENTION_DAYS` 的值，自動刪除過期資料。
 

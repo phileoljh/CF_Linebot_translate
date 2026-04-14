@@ -1,13 +1,23 @@
-.vercel
+# Node dependencies
+node_modules/
+
+# Wrangler / Cloudflare
+.wrangler/
+.dev.vars
+dist/
+
+# Logs
 *.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environments (Legacy Vercel/Python - Can be removed if fully migrated)
+.vercel
 *.pyc
 __pycache__
-
-# Environments 
 .env 
 .venv 
 env/ 
 venv/ 
-ENV/ 
-env.bak/ 
-venv.bak/ 
