@@ -39,7 +39,7 @@ INSERT OR REPLACE INTO system_configs (key, value, description) VALUES
 ('SAVE_CHAT_HISTORY', '0', '是否將對話紀錄存入 D1 資料庫 (1: 是, 0: 否)'),
 ('CHAT_RETENTION_DAYS', '30', '對話紀錄保留天數'),
 ('ENABLE_DEBUGGING', '1', '是否開啟詳細偵錯日誌 (1: 是, 0: 否)'),
-('SUPPORTED_LANGUAGES', '繁體中文 (zh-TW), 日文 (ja), 英文 (en), 法文 (fr), 泰文 (th), 印尼文 (id), 越南文 (vi), 印度文 (hi), 菲律賓文 (tl), 柬埔寨文 (km)', '支援的語種列表');
+('SUPPORTED_LANGUAGES', '繁體中文 (zh-TW), 日文 (ja), 英文 (en), 德文 (de), 西班牙文 (es), 法文 (fr), 葡萄牙文 (pt), 俄文 (ru), 孟加拉文 (bn), 阿拉伯文 (ar), 烏爾都文 (ur), 泰文 (th), 印尼文 (id), 越南文 (vi), 印度文 (hi), 菲律賓文 (tl), 柬埔寨文 (km)', '支援的語種列表');
 
 -- 清理已廢棄的設定：Responses API (GPT-5) 不支援 temperature 參數
 -- 若資料庫已存在此欄位（由舊版 schema 建立），此指令將其移除

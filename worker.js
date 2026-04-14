@@ -159,7 +159,7 @@ async function handleLineEvent(event, env, ctx) {
         return replyMessage(event.replyToken, info, env);
       }
       if (subCommand === "lang") {
-        const supportedLangs = await getSystemConfig("SUPPORTED_LANGUAGES", "zh-TW, en, ja", env);
+        const supportedLangs = await getSystemConfig("SUPPORTED_LANGUAGES", "zh-TW, ja, en, de, es, fr, pt, ru, bn, ar, ur, th, id, vi, hi, tl, km", env);
         return replyMessage(event.replyToken, `目前的支援語種列表：\n${supportedLangs}`, env);
       }
     }
@@ -527,7 +527,9 @@ function normalizeLangCode(code) {
     'zh-tw': 'zh-TW',
     'zh-cn': 'zh-CN',
     'en-us': 'en-US',
-    'en-gb': 'en-GB'
+    'en-gb': 'en-GB',
+    'de-de': 'de-DE',
+    'es-es': 'es-ES'
   };
   const lower = code.toLowerCase();
   

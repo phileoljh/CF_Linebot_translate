@@ -68,7 +68,7 @@
 - `/on`: 開啟對話功能。
 - `/off`: 暫停對話功能 (機器人會進入靜音模式)。
 - `/lang set [語言代碼列表]`: 設定翻譯目標。支援以空白或逗號分隔。
-  - 例如：`/lang set ja, en` 或 `/lang set zh-TW ja en`。
+  - 例如：`/lang set ja, en, de, es` 或 `/lang set zh-TW ja en de es`。
 - `/lang reset`: 恢復使用系統全域預設的語種設定 (`DEFAULT_GUIDELINE`)。
 - `/status`: 顯示目前的系統詳細設定與該會話狀態。
 
