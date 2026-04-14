@@ -56,3 +56,45 @@ DELETE FROM system_configs WHERE key = 'OPENAI_TEMPERATURE';
 -- 4. chat_history: 對話歷史紀錄表
 --    - role: 'system', 'user', 'assistant'
 -- 5. idx_chat_history_session_id: 加速歷史紀錄查詢與排序
+
+-- ==========================================
+-- 🛠️ 維護指令 (Maintenance Commands)
+-- 當您需要手動管理資料庫時，可以拷貝以下指令執行
+-- ==========================================
+
+-- 【設定類】
+-- 1. 開啟/關閉 詳細偵錯日誌 (1: 開, 0: 關)
+-- UPDATE system_configs SET value = '1' WHERE key = 'ENABLE_DEBUGGING';
+
+-- 2. 開啟/關閉 對話紀錄存檔 (1: 開, 0: 關)
+-- UPDATE system_configs SET value = '1' WHERE key = 'SAVE_CHAT_HISTORY';
+
+-- 3. 修改全域預設指令 (例如增加新語言)
+-- UPDATE system_configs SET value = '你是一個翻譯助手...' WHERE key = 'DEFAULT_GUIDELINE';
+
+-- 【管理類】
+-- 4. 新增管理者 (填入 User ID)
+-- INSERT OR IGNORE INTO admins (user_id, note) VALUES ('U123456...', '管理者名稱');
+
+-- 5. 移除管理者
+-- DELETE FROM admins WHERE user_id = 'U123456...';
+
+-- 【清理類】
+-- 6. 清空「全體」對話歷史紀錄 (慎用！)
+-- DELETE FROM chat_history;
+
+-- 7. 清空「特定群組/個人」的對話歷史 (填入 Session ID)
+-- DELETE FROM chat_history WHERE session_id = 'C123456...';
+
+-- 8. 手動執行過期資料清理 (例如清理 7 天前)
+-- DELETE FROM chat_history WHERE created_at < datetime('now', '-7 days');
+
+-- 【查詢類】
+-- 9. 查詢目前各表數據量
+-- SELECT 'system_configs' as table_name, COUNT(*) as count FROM system_configs
+-- UNION ALL SELECT 'admins', COUNT(*) FROM admins
+-- UNION ALL SELECT 'chat_sessions', COUNT(*) FROM chat_sessions
+-- UNION ALL SELECT 'chat_history', COUNT(*) FROM chat_history;
+
+-- 10. 查詢最近 10 筆對話紀錄
+-- SELECT * FROM chat_history ORDER BY id DESC LIMIT 10;
