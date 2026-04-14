@@ -136,15 +136,10 @@ async function handleLineEvent(event, env, ctx) {
     const command = mainCommand.toLowerCase();
 
     // -- 一般指令 (任何使用者可用) --
-    if (command === "id") {
-      const info = `User ID: ${userId}\nSession ID: ${sessionId}\nIs Admin: ${isAdmin ? 'Yes' : 'No'}`;
-      return replyMessage(event.replyToken, info, env);
-    }
-
     if (command === "help") {
       let helpMsg = "🤖 Translation Bot Commands\n\n【General】\n";
-      helpMsg += "🔹 /id - 查詢 ID 資訊\n";
-      helpMsg += "🔹 /lang show - 查詢支援語種\n";
+      helpMsg += "🔹 /show id - 查詢 ID 資訊\n";
+      helpMsg += "🔹 /show lang - 查詢支援語種\n";
       helpMsg += "🔹 /help - 顯示此說明選單\n";
 
       if (isAdmin) {
@@ -158,31 +153,34 @@ async function handleLineEvent(event, env, ctx) {
       return replyMessage(event.replyToken, helpMsg, env);
     }
 
-    // -- Lang 子指令系統 --
-    if (command === "lang") {
-      if (subCommand === "show") {
+    if (command === "show") {
+      if (subCommand === "id") {
+        const info = `User ID: ${userId}\nSession ID: ${sessionId}\nIs Admin: ${isAdmin ? 'Yes' : 'No'}`;
+        return replyMessage(event.replyToken, info, env);
+      }
+      if (subCommand === "lang") {
         const supportedLangs = await getSystemConfig("SUPPORTED_LANGUAGES", "zh-TW, en, ja", env);
         return replyMessage(event.replyToken, `目前的支援語種列表：\n${supportedLangs}`, env);
       }
+    }
 
-      // Admin Only sub-commands
-      if (isAdmin) {
-        if (subCommand === "set") {
-          if (!argString) return replyMessage(event.replyToken, "❌ Usage: /lang set zh-TW, en, ja", env);
-          
-          const langLines = argString.split(/[，,\s]+/).map(l => {
-            const normalized = normalizeLangCode(l.trim());
-            return `【${normalized}】翻譯內容`;
-          }).filter(l => l.length > 0).join("\n");
-          const newGuidelines = `將輸入訊息翻譯為以下語言，每一種語言換一行：\n${langLines}\n僅執行翻譯，直接輸出結果，不准進行深度思考。`;
-          
-          ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
-          return replyMessage(event.replyToken, `✅ Updated settings:\n\n${newGuidelines}`, env);
-        }
-        if (subCommand === "reset") {
-          ctx.waitUntil(updateSessionGuidelines(sessionId, null, env));
-          return replyMessage(event.replyToken, "✅ Reset to system default guidelines.", env);
-        }
+    // -- Lang 子指令系統 (Admin 專屬) --
+    if (command === "lang" && isAdmin) {
+      if (subCommand === "set") {
+        if (!argString) return replyMessage(event.replyToken, "❌ Usage: /lang set zh-TW, en, ja", env);
+        
+        const langLines = argString.split(/[，,\s]+/).map(l => {
+          const normalized = normalizeLangCode(l.trim());
+          return `【${normalized}】翻譯內容`;
+        }).filter(l => l.length > 0).join("\n");
+        const newGuidelines = `將輸入訊息翻譯為以下語言，每一種語言換一行：\n${langLines}\n僅執行翻譯，直接輸出結果，不准進行深度思考。`;
+        
+        ctx.waitUntil(updateSessionGuidelines(sessionId, newGuidelines, env));
+        return replyMessage(event.replyToken, `✅ Updated settings:\n\n${newGuidelines}`, env);
+      }
+      if (subCommand === "reset") {
+        ctx.waitUntil(updateSessionGuidelines(sessionId, null, env));
+        return replyMessage(event.replyToken, "✅ Reset to system default guidelines.", env);
       }
     }
 
